@@ -238,6 +238,7 @@ B_input(packet)
         ackPacket.checksum = ackCheckSum;
         printf("resending Ack %d",packet.seqnum);
         tolayer3(1,ackPacket);
+        
     }
     else
     {
