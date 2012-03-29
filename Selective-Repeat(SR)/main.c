@@ -1,12 +1,13 @@
 /* 
  * File:   main.c
- * Author: abhishek-srinath
+ * Author: Abhishek-Srinath
  *
  * Created on March 12, 2012, 9:27 AM
  */
 
 #include <stdio.h>
 #include <string.h>
+//#include <stdlib.h>
 
 /* ******************************************************************
  ALTERNATING BIT AND GO-BACK-N NETWORK EMULATOR: VERSION 1.1  J.F.Kurose
@@ -44,77 +45,111 @@ struct pkt {
 
 /********* STUDENTS WRITE THE NEXT SEVEN ROUTINES *********/
 
-int in_cksum(char *addr, int len)
-{
-    int nleft = len;
-    char *w = addr;
-    int answer;
-    int sum = 0;
+    
+    
+    struct pkt sendingPacket[2000];  
+    struct pkt buferredPacket[2000];
+    int base = 1;
+    int nextSeqNum = 1;
+    int windowSize = 10;
+    int logicalTimeArray[2000];
+    int inputPacketNum = 0;
+    int buferredSeqNum = 1;
+     int count = 1;
+    
+    int in_cksum(char *addr, int len)
+    {
+        int nleft = len;
+        char *w = addr;
+        int answer;
+        int sum = 0;
     /*
      *  My algorithm is simple, using a 32 bit accumulator (sum),
      *  we add sequential 16 bit words to it, and at the end, fold
      *  back all the carry bits from the top 16 bits into the lower
      *  16 bits.
      */
-    while (nleft > 1)  {
-        sum += *w++;
-        //printf("char:-%c\tvalue:-%d\n",*w,sum);
-        nleft -= 2;
-    }
+        while (nleft > 1)  
+        {
+                sum += *w++;
+                //printf("char:-%c\tvalue:-%d\n",*w,sum);
+                nleft -= 2;
+        }
 
     /* mop up an odd byte, if necessary */
-    if (nleft == 1)
-        sum += *(char *)w;
+        if (nleft == 1)
+                sum += *(char *)w;
 
     /*
      * add back carry outs from top 16 bits to low 16 bits
      */
-    sum = (sum >> 16) + (sum & 0xffff); /* add hi 16 to low 16 */
-    sum += (sum >> 16);         /* add carry */
-    answer = ~sum;              /* truncate to 16 bits */
-    return (answer);
+        sum = (sum >> 16) + (sum & 0xffff); /* add hi 16 to low 16 */
+        sum += (sum >> 16);         /* add carry */
+        answer = ~sum;              /* truncate to 16 bits */
+        return (answer);
 }
 
-    struct pkt sendingPacket[2000];
-    int base=1;
-    int nextSeqNum=1;
-    int windowSize=10;
-    int logicalTimeArray[2000];
+void checkBuffer(int nextSequenceNumber)
+{
+    if(buferredPacket[nextSequenceNumber].seqnum == nextSequenceNumber)
+    {
+        
+        printf("\nA_output:-Sending packet which was buferred with seq no %d to layer3\n",nextSequenceNumber);
+        
+        
+        //copying contents from the buffer to the sending pkt
+        strcpy(sendingPacket[nextSequenceNumber].payload,buferredPacket[nextSequenceNumber].payload);
+        sendingPacket[nextSequenceNumber].checksum = buferredPacket[nextSequenceNumber].checksum;
+        sendingPacket[nextSequenceNumber].seqnum = buferredPacket[nextSequenceNumber].seqnum;
+        tolayer3(0,sendingPacket[nextSequenceNumber]);
+        logicalTimeArray[nextSequenceNumber] = 3;
+        nextSeqNum++;
+    }
+    
+    
+}
+    
 
 /* called from layer 5, passed the data to be sent to other side */
 A_output(message)
   struct msg message;
 {
-    int sendingChkSum=0;
-    int i;
-    if(nextSeqNum < base + windowSize)
-    {
-        for (i=0; i<20; i++)
-                sendingPacket[nextSeqNum].payload[i] = message.data[i];
-
-        sendingPacket[nextSeqNum].seqnum=nextSeqNum;
-        sendingChkSum=in_cksum(message.data,20);
-        sendingPacket[nextSeqNum].checksum=sendingChkSum + nextSeqNum;
-        tolayer3(0,sendingPacket[nextSeqNum]);
-        printf("\nA_output:-Sending packet with seq no %d to layer3\n",nextSeqNum);
-/*
-        if(nextSeqNum == base)
-        {
-            printf("Started timer for pkt %d",base);
-            starttimer(0,100.0);
-        }
-*/
-        logicalTimeArray[nextSeqNum]=20;
-        nextSeqNum++;
-        starttimer(0,1.0);
-        printf("nextSeq number-> %d\nBase->%d",nextSeqNum,base);
+    int ChkSum=0;
+   
+            inputPacketNum++;
+            if(nextSeqNum < (base + windowSize) )    
+            {
+                
+                strcpy(sendingPacket[nextSeqNum].payload,message.data);
+                sendingPacket[nextSeqNum].seqnum=nextSeqNum;
+                ChkSum = in_cksum(message.data,20);
+                sendingPacket[nextSeqNum].checksum = ChkSum + nextSeqNum;
+                logicalTimeArray[nextSeqNum]=3;
+                tolayer3(0,sendingPacket[nextSeqNum]);
+                     
+                printf("\nA_output:-Sending packet with seq no %d to layer3\n",nextSeqNum);
+                
+                //nextSeqNum++;
+                if(count == 1)
+                {
+                        starttimer(0,5.0);
+                        printf("time for pkt %d id",nextSeqNum);
+                        count++;
+                }
+                nextSeqNum++;
+                printf("nextSe number-> %d\nBase->%d",nextSeqNum,base);
         
-    }
-    else
-    {
-        printf("\nrefuse data not enough space\n");
-       // exit(0);
-    }
+            }
+
+            else
+            {     
+                printf("\nA_output:- Buferring the pkt");
+                strcpy(buferredPacket[inputPacketNum].payload,message.data);
+                buferredPacket[inputPacketNum].seqnum = inputPacketNum;
+                buferredPacket[inputPacketNum].checksum = (in_cksum(message.data,20) + inputPacketNum);
+                //inputPacketNum++;           
+            }
+
 
 }
 
@@ -139,19 +174,23 @@ A_input(packet)
                 logicalTimeArray[packet.acknum]=0;
                 if(packet.acknum == base)
                 {
-                        base++;
-                }
-                while(base < nextSeqNum)
-                {
-                    if(logicalTimeArray[base] == 0)
-                    {
-                        base++;
-                    }
-                    else
-                    {
-                        break;
-                    }
+                        base++;    
+               // checkBuffer(nextSeqNum);
+                        while(base < nextSeqNum)
+                        {
+                                if(logicalTimeArray[base] == 0)
+                                {
+                                        base++;
+                                }
+                                else
+                                {
+                                        // if(logicalTimeArray[nextSeqNum] == 99999)
+                                        //checkBuffer(nextSeqNum);
+                                        break;
+                                }
                         
+                        }
+                        checkBuffer(nextSeqNum);
                 }
         }
         printf("\nA_input:-base incremented to %d\n",base);
@@ -176,13 +215,13 @@ A_timerinterrupt()
             {
                 printf("\nA_timerinterrupt:- sending packets %d to layer3\n",runner);
                 tolayer3(0,sendingPacket[runner]);
-                logicalTimeArray[runner]=20;
-                starttimer(0,1.0);
+                logicalTimeArray[runner]=3;
+                //starttimer(0,1.0);
             }
             runner++;  
             
         }
-    starttimer(0,1.0);
+    starttimer(0,5.0);
 }  
 
 /* the following routine will be called once (only) before any other */
@@ -194,6 +233,7 @@ A_init()
     for(i=0;i<2000;i++)
     {
         logicalTimeArray[i]=99999;
+        buferredPacket[i].seqnum = 99999;
     }
 }
 
@@ -211,56 +251,69 @@ B_input(packet)
     int receivedSeqNumber;
     receivingPacketChkSum = in_cksum(packet.payload,20);
     receivingPacketChkSum += packet.seqnum;
-    if(receivingPacketChkSum == packet.checksum && packet.seqnum >= receivingBaseSeqNum && packet.seqnum < receivingBaseSeqNum + windowSize)
+    if(receivingPacketChkSum == packet.checksum )
     {
-        receivedSeqNumber = packet.seqnum;
-        printf("\nB_input:-Pkt not corrupted and received seq number %d within window\n",packet.seqnum);
-        /*Buffering the contents before sending to layer5 because we need to send it in order*/
-        strcpy(receivingPacket[receivedSeqNumber].payload,packet.payload);
-        receivingPacket[receivedSeqNumber].seqnum = packet.seqnum;
-        receivingPacket[receivedSeqNumber].checksum = packet.checksum;
-        receivingPacket[receivedSeqNumber].acknum = packet.acknum;
-        /*Sending an Ack*/
-        ackCheckSum = receivedSeqNumber + 5;
-        ackPacket.acknum = receivedSeqNumber;
-        ackPacket.checksum = ackCheckSum;
-        printf("\nB_input:-ack packet %d sent to layer 3\n",receivedSeqNumber);
-        tolayer3(1,ackPacket);
+        //if(packet.seqnum >= receivingBaseSeqNum && packet.seqnum < (receivingBaseSeqNum + windowSize))
+            if(packet.seqnum >= receivingBaseSeqNum)
+            {
+                receivedSeqNumber = packet.seqnum;
+                printf("\nB_input:-Pkt not corrupted and received seq number %d within window\n",packet.seqnum);
+                /*Buffering the contents before sending to layer5 because we need to send it in order*/
+                strcpy(receivingPacket[receivedSeqNumber].payload,packet.payload);
+                receivingPacket[receivedSeqNumber].seqnum = packet.seqnum;
+                receivingPacket[receivedSeqNumber].checksum = packet.checksum;
+                receivingPacket[receivedSeqNumber].acknum = packet.acknum;
+                /*Sending an Ack*/
+                ackCheckSum = receivedSeqNumber + 5;
+                ackPacket.acknum = receivedSeqNumber;
+                ackPacket.checksum = ackCheckSum;
+                printf("\nB_input:-ack packet %d sent to layer 3\n",receivedSeqNumber);
+                tolayer3(1,ackPacket);
         
-        if(packet.seqnum == receivingBaseSeqNum)
-        {
-                tolayer5(1,receivingPacket[receivingBaseSeqNum].payload);
-                printf("\nDeliver packet %d to layer5\n",receivingBaseSeqNum); 
-                receivingBaseSeqNum++;
-                while(receivingBaseSeqNum < receivingBaseSeqNum + windowSize)
+                if(packet.seqnum == receivingBaseSeqNum)
                 {
-                    if(receivingPacket[receivingBaseSeqNum].seqnum == receivingBaseSeqNum)
-                    {
                         tolayer5(1,receivingPacket[receivingBaseSeqNum].payload);
-                        printf("\nDeliver packet %d to layer5\n",receivingBaseSeqNum);
+                        printf("\nB_input:-Deliver packet %d to layer5\n",receivingBaseSeqNum); 
                         receivingBaseSeqNum++;
-                    }
-                    else
-                    {
-                        break;
-                    }
-                }
+                        printf("\nB_Input:- After successful increment ReceiverBaseseqNumber = %d\n",receivingBaseSeqNum);
+                        
+                        //while(receivingBaseSeqNum < (receivingBaseSeqNum + windowSize))
+                        //{
+                            printf("****************Coming into the while loop************8\n");
+                                while(receivingPacket[receivingBaseSeqNum].seqnum == receivingBaseSeqNum)
+                                {
+                                        tolayer5(1,receivingPacket[receivingBaseSeqNum].payload);
+                                        printf("\nB_input:-Deliver packet %d to layer5\n",receivingBaseSeqNum);
+                                        receivingBaseSeqNum++;
+                                        printf("\nB_Input:- After successful increment ReceiverBaseseqNumber = %d\n",receivingBaseSeqNum);
+                                }
+                                //else
+                               // {
+                                 //       break;
+                                //}
+                        //}
             
+                }
+        
         }
+        else if (receivingPacketChkSum == packet.checksum && packet.seqnum <= receivingBaseSeqNum - 1)
+        {
+                ackCheckSum = packet.seqnum + 5;
+                ackPacket.acknum = packet.seqnum;
+                ackPacket.checksum = ackCheckSum;
+                printf("resending Ack for pkt %d",packet.seqnum);
+                tolayer3(1,ackPacket);
         
-    }
-    else if (receivingPacketChkSum == packet.checksum && packet.seqnum <= receivingBaseSeqNum - 1)
-    {
-        ackCheckSum = packet.seqnum + 5;
-        ackPacket.acknum = packet.seqnum;
-        ackPacket.checksum = ackCheckSum;
-        printf("resending Ack %d",packet.seqnum);
-        tolayer3(1,ackPacket);
-        
+        }
+        else
+        {
+                printf("\nB_Input:-Received wrong seq number %d\n",packet.seqnum);
+                printf("\nB_Input:-ReceiverBaseseqNumber = %d",receivingBaseSeqNum);
+        }
     }
     else
     {
-        printf("\nPacket is corrupted or received wrong seq number\n");
+        printf("\nB_Input:-Packet with SeqNumber %d is corrupted \n",packet.seqnum);
         //tolayer3(1,ackPacket);
     }
 }
@@ -692,3 +745,4 @@ tolayer5(AorB,datasent)
    }
   
 }
+
