@@ -7,6 +7,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <sys/time.h>
 //#include <stdlib.h>
 
 /* ******************************************************************
@@ -55,8 +56,24 @@ struct pkt {
     int logicalTimeArray[2000];
     int inputPacketNum = 0;
     int buferredSeqNum = 1;
-     int count = 1;
+    int count = 1;
+    int A_toLayer4Count = 0;
+    int A_toLayer3Count = 0;
+     
+     
+    int receivingBaseSeqNum = 1;
+    struct pkt ackPacket;
+    struct pkt receivingPacket[2000];
+    int B_tolayer5Count = 0;
+    int B_tolayer4Count = 0;
+       
+struct timeval tv;
+
+double tStartUpload=0.0;
+double tEndUpload=0.0;
+struct timeval tim;
     
+  
     int in_cksum(char *addr, int len)
     {
         int nleft = len;
@@ -114,9 +131,16 @@ void checkBuffer(int nextSequenceNumber)
 A_output(message)
   struct msg message;
 {
+    A_toLayer4Count++;    // This is the count which stores the no of pkt delivered from layer 5 to layer 4 on A's side 
     int ChkSum=0;
    
             inputPacketNum++;
+            /*
+               Here I am checking whether the next seq number is less than (base + window size) if so
+               then I will prepare a packet and send it to layer 3 
+             else
+               I will buffer the packet so that it will get transmitted wien the base increments  
+             */
             if(nextSeqNum < (base + windowSize) )    
             {
                 
@@ -124,12 +148,13 @@ A_output(message)
                 sendingPacket[nextSeqNum].seqnum=nextSeqNum;
                 ChkSum = in_cksum(message.data,20);
                 sendingPacket[nextSeqNum].checksum = ChkSum + nextSeqNum;
-                logicalTimeArray[nextSeqNum]=3;
+                /*This is the logical time array which stores the logical time for each pkt*/
+                logicalTimeArray[nextSeqNum]=3;   
                 tolayer3(0,sendingPacket[nextSeqNum]);
-                     
+                A_toLayer3Count++;  // This is the count of no of pkt sent from transport to network
                 printf("\nA_output:-Sending packet with seq no %d to layer3\n",nextSeqNum);
                 
-                //nextSeqNum++;
+                //Starting the HW clock only once
                 if(count == 1)
                 {
                         starttimer(0,5.0);
@@ -140,7 +165,8 @@ A_output(message)
                 printf("nextSe number-> %d\nBase->%d",nextSeqNum,base);
         
             }
-
+            /*Buferring the pkt in case the sending rate from the application layer 
+             is faster then the pkt transmission rate*/
             else
             {     
                 printf("\nA_output:- Buferring the pkt");
@@ -165,6 +191,7 @@ A_input(packet)
 {
     int tempAckCheckSum=0;
     tempAckCheckSum = packet.acknum + 5;
+    //I will check whether the ack pkt is corrupted if not enter for processing 
     if(tempAckCheckSum == packet.checksum)
     {
         
@@ -172,6 +199,8 @@ A_input(packet)
         {
                 printf("\nReceived ack %d which is not corrupted\n",packet.acknum);
                 logicalTimeArray[packet.acknum]=0;
+                /*This is the case where the ack for the base pkt is received and 
+                 * incremented successively if ack for the next pkt are also received  */
                 if(packet.acknum == base)
                 {
                         base++;    
@@ -190,7 +219,7 @@ A_input(packet)
                                 }
                         
                         }
-                        checkBuffer(nextSeqNum);
+                        checkBuffer(nextSeqNum); // This is to check the buffer after incrementing base
                 }
         }
         printf("\nA_input:-base incremented to %d\n",base);
@@ -199,6 +228,11 @@ A_input(packet)
 }
 
 /* called when A's timer goes off */
+  /* This is called when the timer goes off
+   * I loop from the base till the nextseq number and decrement 1 each time . If the value is 0
+   * I will retransmit the packet.
+   * If the value is 0 previously I just skip beacuse the ack for the pkt is received 
+   */
 A_timerinterrupt()
 {
     int runner;
@@ -215,6 +249,7 @@ A_timerinterrupt()
             {
                 printf("\nA_timerinterrupt:- sending packets %d to layer3\n",runner);
                 tolayer3(0,sendingPacket[runner]);
+                A_toLayer3Count++;
                 logicalTimeArray[runner]=3;
                 //starttimer(0,1.0);
             }
@@ -230,6 +265,13 @@ A_init()
 {
     int i;
     printf("Initializing A");
+    tv.tv_sec=0;
+    tv.tv_usec=0;
+    /*Get the start time to calculate the Throughput*/
+    gettimeofday(&tim, NULL);  
+        tStartUpload=tim.tv_sec+(tim.tv_usec/1000000.0);
+
+    //time (&start);
     for(i=0;i<2000;i++)
     {
         logicalTimeArray[i]=99999;
@@ -239,63 +281,85 @@ A_init()
 
 
 /* Note that with simplex transfer from a-to-B, there is no B_output() */
-int receivingBaseSeqNum = 1;
-struct pkt ackPacket;
-struct pkt receivingPacket[2000];
+int receivedSeqNumber;
 /* called from layer 3, when a packet arrives for layer 4 at B*/
 B_input(packet)
   struct pkt packet;
 {
     int receivingPacketChkSum=0;
     int ackCheckSum=0;
-    int receivedSeqNumber;
+    
     receivingPacketChkSum = in_cksum(packet.payload,20);
     receivingPacketChkSum += packet.seqnum;
+    /* Here I check if the pkt is corrupted if yes then I will reject else i will start processing*/
     if(receivingPacketChkSum == packet.checksum )
     {
-        //if(packet.seqnum >= receivingBaseSeqNum && packet.seqnum < (receivingBaseSeqNum + windowSize))
+        B_tolayer4Count++;
+        /*Checking if the seq no of the packet received is greater then the base if so start processing
+         else just send the previous ack
+         */ 
             if(packet.seqnum >= receivingBaseSeqNum)
             {
                 receivedSeqNumber = packet.seqnum;
                 printf("\nB_input:-Pkt not corrupted and received seq number %d within window\n",packet.seqnum);
                 /*Buffering the contents before sending to layer5 because we need to send it in order*/
-                strcpy(receivingPacket[receivedSeqNumber].payload,packet.payload);
-                receivingPacket[receivedSeqNumber].seqnum = packet.seqnum;
-                receivingPacket[receivedSeqNumber].checksum = packet.checksum;
-                receivingPacket[receivedSeqNumber].acknum = packet.acknum;
+/*
+                char tempStr[20];
+                int tempSeq;
+                int tempChkSum;
+                int tempAck;
+                strcpy(tempStr,packet.payload);
+                strcpy(receivingPacket[receivedSeqNumber].payload,tempStr);
+                tempSeq = packet.seqnum;
+                receivingPacket[receivedSeqNumber].seqnum = tempSeq;
+                tempChkSum = packet.checksum;
+                receivingPacket[receivedSeqNumber].checksum = tempChkSum;
+                tempAck = packet.acknum;
+                receivingPacket[receivedSeqNumber].acknum = tempAck;
+*/
+                receivingPacket[packet.seqnum] = packet;
                 /*Sending an Ack*/
                 ackCheckSum = receivedSeqNumber + 5;
                 ackPacket.acknum = receivedSeqNumber;
                 ackPacket.checksum = ackCheckSum;
                 printf("\nB_input:-ack packet %d sent to layer 3\n",receivedSeqNumber);
                 tolayer3(1,ackPacket);
-        
+                /*
+                 Here I check to see if the pkt received is in-order if so I will send it to layer 5
+                 I also make sure that previously received in-order packets are also sent to layer 5 
+                 */
                 if(packet.seqnum == receivingBaseSeqNum)
                 {
                         tolayer5(1,receivingPacket[receivingBaseSeqNum].payload);
                         printf("\nB_input:-Deliver packet %d to layer5\n",receivingBaseSeqNum); 
                         receivingBaseSeqNum++;
+                        B_tolayer5Count++;
                         printf("\nB_Input:- After successful increment ReceiverBaseseqNumber = %d\n",receivingBaseSeqNum);
                         
-                        //while(receivingBaseSeqNum < (receivingBaseSeqNum + windowSize))
-                        //{
-                            printf("****************Coming into the while loop************8\n");
-                                while(receivingPacket[receivingBaseSeqNum].seqnum == receivingBaseSeqNum)
+                        while(1)
+                        {
+                            int tempSeq1 = receivingPacket[receivingBaseSeqNum].seqnum;
+                            printf("*******Inside while:-%d*****************",tempSeq1);
+                            printf("REceiving base seq number %d",receivingBaseSeqNum);
+                                if( tempSeq1 == receivingBaseSeqNum)
                                 {
+                                        printf("****************Coming into the while loop************\n");
                                         tolayer5(1,receivingPacket[receivingBaseSeqNum].payload);
                                         printf("\nB_input:-Deliver packet %d to layer5\n",receivingBaseSeqNum);
                                         receivingBaseSeqNum++;
+                                        B_tolayer5Count++;
                                         printf("\nB_Input:- After successful increment ReceiverBaseseqNumber = %d\n",receivingBaseSeqNum);
                                 }
-                                //else
-                               // {
-                                 //       break;
-                                //}
-                        //}
+                                else
+                                {
+                                        break;
+                                }
+                        }
             
                 }
         
         }
+        /*Previously received packet so just send ack*/
         else if (receivingPacketChkSum == packet.checksum && packet.seqnum <= receivingBaseSeqNum - 1)
         {
                 ackCheckSum = packet.seqnum + 5;
@@ -328,6 +392,15 @@ B_timerinterrupt()
 B_init()
 {
     printf("\nInitializing B\n");
+    int i;
+
+/*
+    for(i = 0;i < 2000;i++)
+    {
+        receivingPacket[i].seqnum = 99999;
+    }
+*/
+
 }
 
 
@@ -458,6 +531,18 @@ int main()
 
 terminate:
    printf(" Simulator terminated at time %f\n after sending %d msgs from layer5\n",time,nsim);
+   gettimeofday(&tim, NULL);  
+        tEndUpload = tim.tv_sec+(tim.tv_usec/1000000.0);
+   //printf("Total count of packets received at layer 5 is %d",);
+   //printf("Total time taken =%0.6lf",);
+   printf("Protocol: [SR]\n");
+   printf("%d of packets sent from the Application Layer of Sender A\n",A_toLayer4Count); 
+   printf("%d of packets sent from the Transport Layer of Sender A\n",A_toLayer3Count);
+   printf("%d packets received at the Transport layer of receiver B\n",B_tolayer4Count);
+   printf("%d of packets received at the Application layer of receiver B\n", B_tolayer5Count);
+   printf("Total time: %0.6lf seconds\n",(tEndUpload - tStartUpload));
+   printf("Throughput = %d packets/seconds",(int)(B_tolayer5Count/(tEndUpload - tStartUpload)));
+
    /*****************************************************************************************/
    /* Add your results here!!! *********************/
    /*****************************************************************************************/
